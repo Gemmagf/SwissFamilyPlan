@@ -2,74 +2,128 @@ import { FinancialData, ScenarioResult } from '../types';
 
 const formatMoney = (n: number) => new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(n);
 
-export function generateReportMarkdown(data: FinancialData, scenarios: ScenarioResult[]): string {
+export function generateReportMarkdown(
+  data: FinancialData, 
+  scenarios: ScenarioResult[], 
+  earlyRetirementAge: number | null
+): string {
   const neutral = scenarios.find(s => s.type === 'neutral')!;
   const pessimistic = scenarios.find(s => s.type === 'pessimistic')!;
-  const optimistic = scenarios.find(s => s.type === 'optimistic')!;
-
-  // KPIs
-  const patrimonyAtRetirement = neutral.data.find(p => p.age === data.retirementAge)?.totalWealth ?? neutral.finalWealth;
-  const patrimonyAtMax = neutral.maxWealth;
+  
+  // KPI Calculations
+  const retirementPoint = neutral.data.find(p => p.age === data.retirementAge);
+  const patrimonyAtRetirement = retirementPoint?.totalWealth ?? neutral.finalWealth;
   const childrenTotalCost = neutral.data.reduce((acc, p) => acc + p.childrenExpenses, 0);
-
-  // Compose Markdown
-  let md = `# Informe de Planificació Financera — Resum\n\n`;
-  md += `**Client:** Família a ${data.canton}\n\n`;
-  md += `**Edat actual (pares):** ${data.currentAge}\n\n`;
-  md += `**Fills previstos:** ${data.currentChildren} actuals + ${data.futureChildren} futurs\n\n`;
-
-  md += `---\n\n## 1) Resum Executiu\n\n`;
-  md += `- **Viabilitat (escenari neutre):** ${neutral.isViable ? 'VIABLE' : `Risc: esgotament als ${neutral.savingsDepletedAge} anys`}\n`;
-  md += `- **Patrimoni estimat a ${data.retirementAge} anys (neutre):** ${formatMoney(patrimonyAtRetirement)}\n`;
-  md += `- **Màxim patrimoni durant la vida (neutre):** ${formatMoney(patrimonyAtMax)}\n\n`;
-
-  md += `**Observacions ràpides:**\n`;
-  md += `- Amb aportacions de ${formatMoney(data.monthlyContribution * 12)}/any i un rendiment esperat del ${data.investmentReturn}%, l’escenari neutre mostra un patrimoni final suficient per mantenir un nivell de vida còmode.\n\n`;
-
-  md += `---\n\n## 2) Anàlisi d'Escenaris (KPIs)\n\n`;
-  // Markdown Table with alignment
-  md += `| Escenari | Patrimoni final | Viabilitat |\n`;
-  md += `| :--- | ---: | :---: |\n`;
-  md += `| Pessimista | ${formatMoney(pessimistic.finalWealth)} | ${pessimistic.isViable ? 'VIABLE' : `NO (esgotat als ${pessimistic.savingsDepletedAge} anys)`} |\n`;
-  md += `| Neutre | ${formatMoney(neutral.finalWealth)} | ${neutral.isViable ? 'VIABLE' : `NO (esgotat als ${neutral.savingsDepletedAge} anys)`} |\n`;
-  md += `| Optimista | ${formatMoney(optimistic.finalWealth)} | ${optimistic.isViable ? 'VIABLE' : `NO (esgotat als ${optimistic.savingsDepletedAge} anys)`} |\n\n`;
-
-  md += `---\n\n## 3) Ingressos en Jubilació (Els 3 Pilars)\n\n`;
-  md += `A partir dels ${data.retirementAge} anys, els ingressos de la família provenen només dels tres pilars del sistema suís:\n`;
-  md += `1. **AHV (Pilar 1)**: Renda pública (aprox. màx 44k CHF/any per parella).\n`;
-  md += `2. **LPP (Pilar 2)**: Renda derivada del capital acumulat (convertit amb taxa del 5.8%).\n`;
-  md += `3. **Pilar 3a**: Capital privat convertit en una renda anual equivalent (linear drawdown) fins als 90 anys.\n\n`;
-  md += `En els gràfics, això reemplaça la línia salarial i passa a mostrar-se com a franges d’ingressos estables durant tota la jubilació.\n\n`;
-
-  md += `---\n\n## 4) Costos de Criança (resum)\n\n`;
-  md += `Cost total (aprox. sumat any a any, escenari neutre): **${formatMoney(childrenTotalCost)}**\n\n`;
-  md += `Detall per anys i recomanacions: revisa la secció de gràfics per veure els pics de Kita (0–5 anys) i universitat (18–22 anys).\n\n`;
-
-  md += `---\n\n## 5) Taula Resum Anual (Extracte 5 anys)\n\n`;
-  md += `| Any | Edat | Fills (Càrrec) | Ingrés Brut | Ingrés Net (aprox.) | Despeses | Estalvi net | Patrimoni |\n`;
-  md += `| ---: | ---: | :---: | ---: | ---: | ---: | ---: | ---: |\n`;
-  neutral.data.filter((_, i) => i % 5 === 0).forEach(p => {
-    md += `| **${p.year}** | **${p.age}** | ${p.activeChildren} | ${formatMoney(p.totalGrossIncome)} | ${formatMoney(p.totalIncome)} | ${formatMoney(p.totalExpenses)} | ${formatMoney(p.yearlySavings)} | ${formatMoney(p.totalWealth)} |\n`;
+  
+  // Find deficit periods for Narrative
+  const deficitPeriods: {start: number, end: number, cause: string}[] = [];
+  let currentDeficitStart: number | null = null;
+  
+  neutral.data.forEach((p, i) => {
+    if (p.isDeficit) {
+      if (currentDeficitStart === null) currentDeficitStart = p.year;
+    } else {
+      if (currentDeficitStart !== null) {
+        // End of a deficit period
+        const midYearIndex = i - 1; 
+        const samplePoint = neutral.data[midYearIndex];
+        let cause = "Despeses generals";
+        if (samplePoint.childrenExpenses > (samplePoint.totalExpenses * 0.3)) cause = "Càrrega Kita/Educació";
+        else if (samplePoint.age >= data.retirementAge) cause = "Rendes jubilació insuficients";
+        
+        deficitPeriods.push({ start: currentDeficitStart, end: p.year - 1, cause });
+        currentDeficitStart = null;
+      }
+    }
   });
 
-  md += `\n---\n\n## 6) Recomanacions Professionals (Family Office)\n\n`;
+  // Collect Timeline Events (Moved House, etc.)
+  const events = neutral.data.filter(p => p.notes && p.notes.length > 0).map(p => ({
+     year: p.year,
+     age: p.age,
+     note: p.notes!.join(", ")
+  }));
+  // Filter out repetitive annual events if any, keep major ones
+  const majorEvents = events.filter(e => !e.note.includes("Fons Esgotats") || e.year % 5 === 0);
+
+  // Recommendations Logic
+  const maxP3 = 7056;
+  const p1Gap = maxP3 - data.pillar3AnnualContribution1;
+  const p2Gap = maxP3 - data.pillar3AnnualContribution2;
+  const totalP3Gap = Math.max(0, p1Gap) + Math.max(0, p2Gap);
+  const taxSavingPotential = totalP3Gap * 0.25; // Approx marginal tax rate
+
+  // --- REPORT GENERATION ---
+
+  let md = `# Informe de Planificació Financera: SwissFamilyPlan\n\n`;
+  md += `**Data:** ${new Date().toLocaleDateString('ca-ES')} | **Cantó:** ${data.canton} | **Perfil:** ${data.luxuryLevel.toUpperCase()}\n\n`;
   
-  md += `### 🏛️ Estratègia d'Inversió (Wealth Management)\n`;
-  md += `*   **Horitzó Temporal**: Aprofita que els fons per a la jubilació tenen un horitzó de +20 anys. Mantingues una exposició alta a renda variable (ETFs globals) per combatre la inflació.\n`;
-  md += `*   **Automatització (DCA)**: L'aportació mensual de ${formatMoney(data.monthlyContribution)} ha de ser automàtica (standing order) per evitar el "market timing".\n`;
-  md += `*   **Rebalanceig**: Un cop l'any, ajusta la cartera si un actiu ha pujat massa, per mantenir el perfil de risc desitjat.\n\n`;
+  // 1. Executive Summary
+  md += `## 1. Visió General i Diagnòstic\n\n`;
+  md += `El vostre pla financer es classifica com a **${neutral.isViable ? '🟢 VIABLE' : '🔴 VULNERABLE'}** sota hipòtesis neutres.\n\n`;
+  
+  md += `**Fites Principals:**\n`;
+  md += `- **Patrimoni a la Jubilació (${data.retirementAge} anys):** ${formatMoney(patrimonyAtRetirement)}\n`;
+  if (majorEvents.some(e => e.note.includes("Mudança"))) {
+     md += `- **Habitatge:** El model preveu una mudança necessària a un pis més gran al voltant de l'any ${majorEvents.find(e => e.note.includes("Mudança"))?.year} per acomodar la família.\n`;
+  }
+  md += `- **Cost Criança Total:** ${formatMoney(childrenTotalCost)} (estimat fins als 25 anys).\n\n`;
 
-  md += `### ⚖️ Optimització Fiscal a Suïssa\n`;
-  md += `*   **Pilar 3a**: Màxima prioritat. Aporta el màxim anual (actualment ~7k CHF) per persona treballadora. Això redueix directament la base imposable.\n`;
-  md += `*   **Compres al 2n Pilar (Buy-ins)**: En anys de bonus alts o 5-10 anys abans de jubilar-se, fer aportacions voluntàries al 2n pilar és la millor eina per estalviar impostos massivament. Revisa el "gap" de compra al teu certificat de la caixa de pensions.\n`;
-  md += `*   **Estratègia de Retirada**: No retiris tot el capital (2n i 3r pilar) el mateix any. Planifica retirar-los en anys diferents per "trencar" la progressivitat de l'impost sobre la retirada de capital.\n\n`;
+  // 2. Narrative Cash Flow
+  md += `## 2. Narrativa del Flux de Caixa\n\n`;
+  md += `L'anàlisi detecta com evolucionarà la vostra capacitat d'estalvi any a any:\n\n`;
+  
+  if (deficitPeriods.length === 0) {
+      md += `✅ **Sostenibilitat:** Manteniu superàvit (estalvi positiu) durant tota la projecció. Això indica una estructura de costos molt sana o ingressos molt alts.\n`;
+  } else {
+      md += `⚠️ **Períodes de Tensió Financera (Dèficit):**\n`;
+      deficitPeriods.forEach(p => {
+         md += `- **${p.start}–${p.end}**: Flux negatiu causat principalment per **${p.cause}**. Durant aquests anys, la família consumirà estalvis acumulats.\n`;
+      });
+      md += `\n*Nota: Tenir dèficit temporalment no és dolent si hi ha liquiditat prèvia (estalvis) per cobrir-lo, com és el cas de la fase Kita.*\n`;
+  }
 
-  md += `### 🛡️ Protecció Familiar i Successió\n`;
-  md += `*   **Assegurança de Vida**: Amb ${data.currentChildren + data.futureChildren} fills previstos i hipoteca/lloguer alt, és **crític** tenir una assegurança de vida (risc pur) que cobreixi mínim 2-3 anys d'ingressos si falta un progenitor.\n`;
-  md += `*   **Testament i Mandat**: A Suïssa, assegura't de tenir un "Vorsorgeauftrag" (mandat d'incapacitat) i un testament per protegir la parella en cas de desgràcia, especialment si no esteu casats o teniu propietats.\n`;
-  md += `*   **Comptes Junior**: Obre comptes d'estalvi/inversió a nom dels fills *ara* per aprofitar l'interès compost fins que tinguin 18 anys. El temps és el millor actiu.\n\n`;
+  // 3. Strategic Recommendations
+  md += `\n## 3. Recomanacions Tàctiques (Valor Afegit)\n\n`;
 
-  md += `---\n\n**Nota:** Aquest informe és una simulació basada en les dades introduïdes. Els mercats fluctuen i la fiscalitat pot canviar. Es recomana revisar aquest pla anualment.\n`;
+  md += `### 💰 Fiscalitat i 3r Pilar\n`;
+  if (totalP3Gap > 0) {
+      md += `🚨 **Oportunitat Perduda:** No esteu maximitzant el 3r Pilar. Teniu un "gap" de ${formatMoney(totalP3Gap)}/any.\n`;
+      md += `> **Acció Immediata:** Si cobriu aquest gap, obtindreu un **retorn fiscal garantit immediat d'aprox. ${formatMoney(taxSavingPotential)} cada any** en devolució d'impostos. És una rendibilitat del 25% sense risc.\n`;
+  } else {
+      md += `✅ **Òptim:** Esteu aprofitant al màxim la deducció del 3r Pilar (${formatMoney(maxP3*2)}/any en total).\n`;
+  }
+
+  md += `\n### 🏠 Estratègia d'Habitatge\n`;
+  if (data.housingStatus === 'rent') {
+      md += `Actualment pagueu ${formatMoney(data.currentHousingCost)}/mes. `;
+      if ((data.currentChildren + data.futureChildren) > data.currentRooms) {
+          md += `Amb ${data.currentChildren + data.futureChildren} fills previstos i només ${data.currentRooms} habitacions, el model ha forçat automàticament un increment de lloguer futur per reflectir una mudança realista.\n`;
+      } else {
+          md += `L'espai actual sembla suficient per a la planificació familiar indicada.\n`;
+      }
+  }
+
+  md += `\n### 🎓 Planificació Educativa\n`;
+  md += `Si els vostres fills estudien a Suïssa i viuen a casa, el cost és manejable (~15k/any). Si opten per universitats a altres cantons (Lausanne, St. Gallen) o a l'estranger, el cost es dispara a **30k-40k CHF/any**.\n`;
+  md += `> **Recomanació:** Obriu un compte d'inversió "Junior" a nom dels pares (per control) amb una aportació de 100-200 CHF/mes des del naixement.\n`;
+
+  // 4. Timeline
+  if (majorEvents.length > 0) {
+      md += `\n## 4. Timeline d'Esdeveniments Clau\n\n`;
+      md += `| Any | Edat | Esdeveniment |\n`;
+      md += `| :--- | :--- | :--- |\n`;
+      majorEvents.slice(0, 8).forEach(e => {
+          md += `| **${e.year}** | ${e.age} | ${e.note} |\n`;
+      });
+  }
+
+  // 5. Comparison Table
+  md += `\n## 5. Comparativa d'Escenaris a 90 anys\n\n`;
+  md += `| Escenari | Patrimoni Final | Estat |\n`;
+  md += `| :--- | ---: | :--- |\n`;
+  md += `| Pessimista | ${formatMoney(pessimistic.finalWealth)} | ${pessimistic.isViable ? 'Viable' : '❌ Esgotat'} |\n`;
+  md += `| Neutre | ${formatMoney(neutral.finalWealth)} | Viable |\n`;
 
   return md;
 }

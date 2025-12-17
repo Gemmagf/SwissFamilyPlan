@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { FinancialData, ProjectionPoint, ScenarioResult, ScenarioType } from './types';
+import React, { useState, useMemo, useEffect } from 'react';
+import { FinancialData, ProjectionPoint, ScenarioResult, ScenarioType, CareerStage } from './types';
 import { estimateLocationCosts } from './services/geminiService'; // kept for estimation feature
 import { runAllScenarios, calculateViableEarlyRetirement } from './services/financeEngine';
 import { generateReportMarkdown } from './services/reportService';
@@ -9,7 +9,7 @@ import {
 } from './components/ReportCharts';
 import { 
   Users, Wallet, Home, TrendingUp, Baby, Plane, FileText, Loader2, ChevronRight, Calculator, MapPin, Wand2,
-  AlertTriangle, CheckCircle, TrendingDown, PieChart, Shield
+  AlertTriangle, CheckCircle, TrendingDown, PieChart, Shield, User, Briefcase
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -19,26 +19,36 @@ const initialData: FinancialData = {
   currentAge: 30,
   retirementAge: 65,
   currentChildren: 0,
-  futureChildren: 4,
+  futureChildren: 2,
   firstChildBirthYearOffset: 1,
   childSpacingYears: 2,
   annualGrossSalary1: 110000,
   annualGrossSalary2: 90000,
+  careerStage1: 'mid',
+  careerStage2: 'mid',
   annualBonus: 0,
-  expectedSalaryIncrease: 3.0, // 3% annual growth
-  currentSavings: 200000, // Initial Savings
-  monthlyContribution: 3000, // 36k/year
+  expectedSalaryIncrease: 2.0, // Base inflation now, engine adds career growth
+  currentSavings: 150000, 
+  monthlyContribution: 2500, 
   investmentReturn: 4.5,
-  pillar2Value: 50000,
-  pillar3Value: 14000,
+  
+  // New Individual Fields
+  pillar2Balance1: 50000,
+  pillar2Balance2: 20000,
+  pillar3Balance1: 14000,
+  pillar3Balance2: 0,
+  pillar3AnnualContribution1: 7056,
+  pillar3AnnualContribution2: 3000,
+
   housingStatus: 'rent',
-  currentHousingCost: 1500, // Will increase with kids/inflation
-  housingCostIncrease: 2.5, // Annual inflation + market adjustments
-  monthlyLivingCost: 7900, // Approx 95k/year total living expenses
-  monthlyDaycareCost: 2500, // Per child < 5
-  monthlySchoolActivityCost: 500, // Per child > 5
-  yearlyTravelBudget: 5000, 
-  universitySupport: 50000, // Lump sum per child
+  currentHousingCost: 1800, 
+  currentRooms: 3.5,
+  housingCostIncrease: 2.0, 
+  monthlyLivingCost: 6000, 
+  monthlyDaycareCost: 2500, 
+  monthlySchoolActivityCost: 400, 
+  yearlyTravelBudget: 6000, 
+  universitySupport: 25000, 
   canton: 'Zürich',
   luxuryLevel: 'comfortable'
 };
@@ -63,6 +73,39 @@ const App: React.FC = () => {
   const [loadingEstimate, setLoadingEstimate] = useState(false);
   const [activeTab, setActiveTab] = useState<string>('input');
   const [selectedScenario, setSelectedScenario] = useState<ScenarioType>('neutral');
+
+  // a) Ajust automàtic del lloguer segons família (Heuristic Logic)
+  useEffect(() => {
+    // We use a local heuristic to avoid excessive API calls
+    const totalKids = formData.currentChildren + formData.futureChildren;
+    const baseRentMap = {
+      humble: 1500,
+      comfortable: 2000,
+      luxury: 3000
+    };
+    const kidCostMap = {
+      humble: 300,
+      comfortable: 500,
+      luxury: 800
+    };
+
+    const base = baseRentMap[formData.luxuryLevel] || 2000;
+    const extra = (totalKids > 2 ? (totalKids - 2) * (kidCostMap[formData.luxuryLevel] || 500) : 0);
+    
+    const estimatedRent = base + extra;
+    
+    // We use a functional update to prevent dependency loops if we included currentHousingCost
+    setFormData(prev => {
+      // Only update if it seems like a default value or we want to enforce it. 
+      // To avoid annoying the user, we only update if the diff is huge or initial load?
+      // For now, let's keep it responsive to luxury level changes mainly.
+      if (prev.luxuryLevel !== initialData.luxuryLevel && Math.abs(prev.currentHousingCost - estimatedRent) > 200) {
+         return { ...prev, currentHousingCost: estimatedRent };
+      }
+      return prev;
+    });
+
+  }, [formData.luxuryLevel]); // Reduced dependency to avoid fighting user input
 
   // Advanced Simulation Engine (Determininstic)
   const scenarios = useMemo((): ScenarioResult[] => {
@@ -103,8 +146,8 @@ const App: React.FC = () => {
   const generateReport = async () => {
     setLoading(true);
     setActiveTab('report');
-    // Generates the deterministic markdown report
-    const result = generateReportMarkdown(formData, scenarios);
+    // Generates the deterministic markdown report with updated parameters
+    const result = generateReportMarkdown(formData, scenarios, earlyRetirementAge);
     // Artificial delay to feel like processing if desired, or just immediate
     setTimeout(() => {
         setReport(result);
@@ -153,6 +196,20 @@ const App: React.FC = () => {
           </div>
         )}
       </div>
+    </div>
+  );
+
+  const SelectGroup = ({ label, name, options }: any) => (
+    <div className="mb-4">
+      <label className="block text-sm font-medium text-[#2b4141] mb-1">{label}</label>
+      <select 
+        name={name} 
+        value={(formData as any)[name]} 
+        onChange={handleInputChange}
+        className="block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-[#0eb1d2] focus:outline-none focus:ring-[#0eb1d2] sm:text-sm"
+      >
+        {options.map((opt: any) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+      </select>
     </div>
   );
 
@@ -219,10 +276,25 @@ const App: React.FC = () => {
                     <div className="bg-[#f8fafc] p-4 rounded-lg mb-4 border border-[#8ab9b5]/20">
                       <div className="grid grid-cols-1 gap-4 mb-4">
                         <InputGroup label="Ciutat / Cantó" name="canton" type="text" icon={MapPin} />
-                        <InputGroup label="Estil de Vida" name="luxuryLevel" type="text" />
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-[#2b4141] mb-1">Estil de Vida</label>
+                          <select 
+                            name="luxuryLevel" 
+                            value={formData.luxuryLevel} 
+                            onChange={handleInputChange}
+                            className="block w-full rounded-md border-gray-300 py-2 pl-3 pr-10 text-base focus:border-[#0eb1d2] focus:outline-none focus:ring-[#0eb1d2] sm:text-sm"
+                          >
+                            <option value="humble">Humil (Basic)</option>
+                            <option value="comfortable">Confortable (Standard)</option>
+                            <option value="luxury">Luxe (Premium)</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="text-xs text-gray-500 italic mb-2">
+                        * El lloguer s'ajustarà automàticament segons fills i estil de vida.
                       </div>
                       <button onClick={handleEstimateCosts} disabled={loadingEstimate || !formData.canton} className="w-full flex items-center justify-center gap-2 bg-[#8ab9b5] hover:bg-[#2b4141] text-white px-4 py-2 rounded-md transition-colors text-sm font-medium disabled:opacity-50">
-                        {loadingEstimate ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />} Estimar costos automàticament
+                        {loadingEstimate ? <Loader2 className="animate-spin" size={16} /> : <Wand2 size={16} />} Refinar costos amb IA
                       </button>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
@@ -233,15 +305,26 @@ const App: React.FC = () => {
                     </div>
                   </section>
                   <section>
-                    <h3 className="text-lg font-semibold text-[#2b4141] border-b border-[#8ab9b5]/30 pb-2 mb-4 flex items-center gap-2"><Wallet size={20} className="text-[#8ab9b5]" /> Ingressos Anuals (Bruts)</h3>
-                    <InputGroup label="Salari Adult 1" name="annualGrossSalary1" suffix="CHF" />
-                    <InputGroup label="Salari Adult 2" name="annualGrossSalary2" suffix="CHF" />
+                    <h3 className="text-lg font-semibold text-[#2b4141] border-b border-[#8ab9b5]/30 pb-2 mb-4 flex items-center gap-2"><Briefcase size={20} className="text-[#8ab9b5]" /> Ingressos i Carrera</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                             <InputGroup label="Salari Adult 1" name="annualGrossSalary1" suffix="CHF" />
+                             <SelectGroup label="Etapa Carrera" name="careerStage1" options={[{value: 'junior', label: 'Junior (<30)'}, {value: 'mid', label: 'Mid (30-45)'}, {value: 'senior', label: 'Senior (45+)'}, {value: 'executive', label: 'Executive'}]} />
+                        </div>
+                        <div>
+                             <InputGroup label="Salari Adult 2" name="annualGrossSalary2" suffix="CHF" />
+                             <SelectGroup label="Etapa Carrera" name="careerStage2" options={[{value: 'junior', label: 'Junior (<30)'}, {value: 'mid', label: 'Mid (30-45)'}, {value: 'senior', label: 'Senior (45+)'}, {value: 'executive', label: 'Executive'}]} />
+                        </div>
+                    </div>
                     <InputGroup label="Bonus Familiar" name="annualBonus" suffix="CHF" />
-                    <InputGroup label="Increment Salarial Estimat" name="expectedSalaryIncrease" step="0.1" suffix="%" />
+                    <InputGroup label="Inflació Base" name="expectedSalaryIncrease" step="0.1" suffix="%" />
                   </section>
                   <section>
                     <h3 className="text-lg font-semibold text-[#2b4141] border-b border-[#8ab9b5]/30 pb-2 mb-4 flex items-center gap-2"><Home size={20} className="text-[#8ab9b5]" /> Despeses Mensuals</h3>
-                    <InputGroup label="Lloguer Mensual" name="currentHousingCost" suffix="CHF" />
+                    <div className="grid grid-cols-2 gap-4">
+                        <InputGroup label="Lloguer Mensual" name="currentHousingCost" suffix="CHF" />
+                        <InputGroup label="Habitacions Actuals" name="currentRooms" step="0.5" suffix="hab" />
+                    </div>
                     <InputGroup label="Vida (Supermercat, Asseg, Oci)" name="monthlyLivingCost" suffix="CHF" />
                     <InputGroup label="Inflació Lloguer Anual" name="housingCostIncrease" step="0.1" suffix="%" />
                     <InputGroup label="Viatges (Anual)" name="yearlyTravelBudget" icon={Plane} suffix="CHF/any" />
@@ -254,14 +337,32 @@ const App: React.FC = () => {
                       <InputGroup label="Suport Universitat (Total)" name="universitySupport" suffix="CHF" />
                     </div>
                   </section>
+                  
+                  {/* Detailed Asset Section */}
                   <section className="md:col-span-2">
-                    <h3 className="text-lg font-semibold text-[#2b4141] border-b border-[#8ab9b5]/30 pb-2 mb-4 flex items-center gap-2"><TrendingUp size={20} className="text-[#8ab9b5]" /> Estalvi & Patrimoni</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <InputGroup label="Estalvi Total Actual" name="currentSavings" suffix="CHF" />
-                      <InputGroup label="Aportació Mensual" name="monthlyContribution" suffix="CHF" />
-                      <InputGroup label="Rendiment Inversió" name="investmentReturn" step="0.1" suffix="%" />
-                      <InputGroup label="2n Pilar (LPP)" name="pillar2Value" suffix="CHF" />
-                      <InputGroup label="3r Pilar (3a)" name="pillar3Value" suffix="CHF" />
+                    <h3 className="text-lg font-semibold text-[#2b4141] border-b border-[#8ab9b5]/30 pb-2 mb-4 flex items-center gap-2"><TrendingUp size={20} className="text-[#8ab9b5]" /> Patrimoni & Pensions (Per Adult)</h3>
+                    
+                    <div className="bg-[#f8fafc] rounded-lg p-4 border border-[#8ab9b5]/20 mb-4">
+                      <h4 className="font-semibold text-[#2b4141] mb-3 flex items-center gap-2"><User size={16} /> Adult 1</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <InputGroup label="Capital LPP (2n Pilar)" name="pillar2Balance1" suffix="CHF" />
+                        <InputGroup label="Capital 3a (Acumulat)" name="pillar3Balance1" suffix="CHF" />
+                        <InputGroup label="Aportació Anual 3a (Plan)" name="pillar3AnnualContribution1" suffix="CHF" />
+                      </div>
+                    </div>
+
+                    <div className="bg-[#f8fafc] rounded-lg p-4 border border-[#8ab9b5]/20 mb-4">
+                      <h4 className="font-semibold text-[#2b4141] mb-3 flex items-center gap-2"><User size={16} /> Adult 2</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <InputGroup label="Capital LPP (2n Pilar)" name="pillar2Balance2" suffix="CHF" />
+                        <InputGroup label="Capital 3a (Acumulat)" name="pillar3Balance2" suffix="CHF" />
+                        <InputGroup label="Aportació Anual 3a (Plan)" name="pillar3AnnualContribution2" suffix="CHF" />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                      <InputGroup label="Estalvi Líquid Actual (Total)" name="currentSavings" suffix="CHF" />
+                      <InputGroup label="Rendiment Inversió Estimat" name="investmentReturn" step="0.1" suffix="%" />
                     </div>
                   </section>
                 </div>
@@ -321,7 +422,7 @@ const App: React.FC = () => {
               {/* AI Executive Summary */}
               {report && (
                  <div className="bg-[#f8fafc] p-6 rounded-lg border border-[#8ab9b5]/20 prose prose-stone max-w-none text-sm text-[#656c6e] prose-p:text-[#656c6e] prose-li:text-[#656c6e] prose-td:text-[#656c6e] prose-th:text-[#2b4141] prose-table:text-sm">
-                   <h3 className="text-[#2b4141] font-bold mt-0 flex items-center gap-2"><FileText size={16} /> Resum Executiu (IA)</h3>
+                   <h3 className="text-[#2b4141] font-bold mt-0 flex items-center gap-2"><FileText size={16} /> Resum Executiu</h3>
                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.split('##')[0] || "Generant..."}</ReactMarkdown>
                  </div>
               )}
@@ -329,19 +430,14 @@ const App: React.FC = () => {
 
             {/* Section 1: Income */}
             <div className="bg-white rounded-xl shadow-sm border border-[#8ab9b5]/30 p-6 mb-8">
-              <SectionHeader icon={Wallet} title="1. Projecció d'Ingressos Nets (Cash In)" />
+              <SectionHeader icon={Wallet} title="1. Projecció d'Ingressos Nets" />
               <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                 <div className="md:col-span-2">
-                   <h4 className="text-sm font-semibold text-[#2b4141] mb-4">Evolució Salarial Neta</h4>
+                   <h4 className="text-sm font-semibold text-[#2b4141] mb-4">Evolució Salarial i Pensions</h4>
                    <IncomeChart data={activeScenarioData.data} />
                    <ChartExplanation 
-                      title="Evolució Salarial Neta"
-                      items={[
-                        "Salaris nets dels dos pares",
-                        "Bonus (si aplica)"
-                      ]}
-                      desc="Aquest gràfic mostra l’evolució dels ingressos nets familiars (després d’impostos) des dels 30 fins als 90 anys, assumint: creixement del salari del 3% anual fins als 55 anys, estabilització després, i reducció d’ingressos en la jubilació."
-                      interpretation="La corba ascendent fins ~55 reflecteix el creixement professional; després hi ha estabilització i una caiguda prevista en la jubilació (65 anys)."
+                      title="Interpretació"
+                      interpretation="La corba mostra el creixement professional segons la teva etapa de carrera (junior/mid/senior). La 'caiguda' als 65 anys marca l'inici de la jubilació, on els ingressos passen a provenir dels pilars (AHV, LPP i 3r Pilar)."
                    />
                 </div>
                 <div className="overflow-x-auto h-64">
@@ -367,42 +463,30 @@ const App: React.FC = () => {
             {/* Section 2 & 3: Expenses & Children */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
                <div className="bg-white rounded-xl shadow-sm border border-[#8ab9b5]/30 p-6">
-                  <SectionHeader icon={Home} title="2. Desglossament Despeses (Amb Inflació)" />
+                  <SectionHeader icon={Home} title="2. Desglossament Despeses" />
                   <ExpensesChart data={activeScenarioData.data} />
                   <ChartExplanation 
-                      title="Despesa Total Anual"
-                      items={[
-                        "Fills & Educació: Kita (0–5 anys), activitats (6–18), universitat (18–22)",
-                        "Habitatge: lloguer + assegurances + serveis",
-                        "Viatges: viatges anuals ajustats per inflació",
-                        "Vida Diària: menjar, transport, assegurances, salut, etc."
-                      ]}
-                      interpretation="El gruix de color taronja (fills) creix molt en: anys 30–35 → Kita (etapa més cara), anys 48–52 → universitat"
+                      title="Interpretació de Despeses"
+                      interpretation="L'increment anual reflecteix la inflació. Si veieu un salt brusc en el cost d'habitatge (verd fosc), és perquè el model ha detectat que la família creix i necessita mudar-se a un pis amb més habitacions."
                    />
                </div>
                <div className="bg-white rounded-xl shadow-sm border border-[#8ab9b5]/30 p-6">
                   <SectionHeader icon={Baby} title="3. Impacte Cost Fills" />
                   <ChildrenCostChart data={activeScenarioData.data} />
                   <ChartExplanation 
-                      title="Impacte Cost Fills"
-                      desc="Mostra la despesa anual específica dels fills comparada amb el pressupost total de despeses."
-                      interpretation="Els pics coincideixen amb: Kita (0–5 anys) ~30k/any per fill, Universitat (18–22) ~50k total per fill."
+                      title="Pics de Despesa"
+                      interpretation="Els pics coincideixen amb l'etapa de Kita (0–5 anys, aprox. 30k CHF/any) i l'etapa Universitària (19–23 anys, aprox. 50k CHF totals)."
                    />
                </div>
             </div>
 
             {/* Section 4: Savings */}
             <div className="bg-white rounded-xl shadow-sm border border-[#8ab9b5]/30 p-6 mb-8">
-              <SectionHeader icon={TrendingUp} title="4. Estalvi i Inversió (Wealth)" />
+              <SectionHeader icon={TrendingUp} title="4. Estalvi i Inversió" />
               <WealthChart data={activeScenarioData.data} />
               <ChartExplanation 
-                  title="Estalvi i Inversió"
-                  items={[
-                    "Lila/Indi → Pilar 2/3 (pensions)",
-                    "Blau → Inversions",
-                    "Verd → Estalvis líquids"
-                  ]}
-                  interpretation="La part superior és el creixement per interès compost: és la prova que a llarg termini el patrimoni creix molt més pel rendiment acumulat que no pas per l’estalvi anual."
+                  title="Composició del Patrimoni"
+                  interpretation="La majoria del creixement a llarg termini prové del rendiment acumulat (interès compost). La franja lila representa els fons de pensions (intocables fins a la jubilació)."
               />
             </div>
 
@@ -411,43 +495,19 @@ const App: React.FC = () => {
               <SectionHeader icon={PieChart} title="5. Cash Flow Anual" />
               <CashFlowChart data={activeScenarioData.data} />
               <ChartExplanation 
-                  title="Cash Flow Anual"
-                  items={[
-                    "Ingressos totals",
-                    "Despeses totals",
-                    "Estalvi (positiu = verd, negatiu = vermell)"
-                  ]}
-                  interpretation="Els anys en vermell són: anys amb cost de Kita, anys amb universitat, després de la jubilació (ingressos més baixos). Això és normal i no vol dir inviabilitat → només que cal utilitzar estalvis inversos."
+                  title="Flux de Caixa"
+                  interpretation="Les barres vermelles indiquen anys on les despeses superen els ingressos (dèficit). És habitual durant els anys de doble Kita o en jubilació avançada, requerint l'ús d'estalvis previs."
               />
             </div>
 
              {/* Section 6: Scenarios */}
              <div className="bg-white rounded-xl shadow-sm border border-[#8ab9b5]/30 p-6 mb-8">
-              <SectionHeader icon={Shield} title="6. Anàlisi d'Escenaris i Sensibilitat" />
+              <SectionHeader icon={Shield} title="6. Anàlisi de Sensibilitat" />
               <ScenariosComparisonChart scenarios={scenarios} />
               <ChartExplanation 
-                  title="Escenaris"
-                  items={[
-                    "Pessimista → 2.5% anual",
-                    "Neutre → 4.5% anual",
-                    "Optimista → 6.5% anual"
-                  ]}
-                  interpretation="La diferència a llarg termini és enorme: a 90 anys hi ha un rang de milions de CHF de diferència. Això demostra que l’interès compost és la variable més important del model."
+                  title="Impacte del Rendiment"
+                  interpretation="L'interès compost és la variable crítica. Petits canvis en el rendiment anual (2.5% vs 6.5%) generen diferències de milions de CHF a 40 anys vista."
               />
-              <div className="grid grid-cols-3 gap-4 mt-6 text-center text-sm">
-                <div className="p-3 bg-red-50 rounded text-red-800">
-                  <strong>Pessimista</strong><br/>
-                  Patrimoni 65: {new Intl.NumberFormat('de-CH', {compactDisplay: "short", notation: "compact"}).format(scenarios.find(s=>s.type==='pessimistic')?.data.find(p => p.age === 65)?.totalWealth || 0)} CHF
-                </div>
-                <div className="p-3 bg-gray-50 rounded text-gray-800">
-                  <strong>Neutre</strong><br/>
-                  Patrimoni 65: {new Intl.NumberFormat('de-CH', {compactDisplay: "short", notation: "compact"}).format(scenarios.find(s=>s.type==='neutral')?.data.find(p => p.age === 65)?.totalWealth || 0)} CHF
-                </div>
-                <div className="p-3 bg-blue-50 rounded text-blue-800">
-                  <strong>Optimista</strong><br/>
-                  Patrimoni 65: {new Intl.NumberFormat('de-CH', {compactDisplay: "short", notation: "compact"}).format(scenarios.find(s=>s.type==='optimistic')?.data.find(p => p.age === 65)?.totalWealth || 0)} CHF
-                </div>
-              </div>
             </div>
 
             {/* Report Content */}

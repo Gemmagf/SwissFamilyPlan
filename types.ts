@@ -1,4 +1,5 @@
 export type ScenarioType = 'pessimistic' | 'neutral' | 'optimistic';
+export type CareerStage = 'junior' | 'mid' | 'senior' | 'executive';
 
 export interface FinancialData {
   currentAge: number;
@@ -10,15 +11,26 @@ export interface FinancialData {
   childSpacingYears?: number; // default 2
   annualGrossSalary1: number;
   annualGrossSalary2: number;
+  careerStage1: CareerStage; // New: affects growth curve
+  careerStage2: CareerStage; // New: affects growth curve
   annualBonus: number;
-  expectedSalaryIncrease: number; // percent
+  // expectedSalaryIncrease is now derived/base, but we keep it as an override or base inflation
+  expectedSalaryIncrease: number;
   currentSavings: number;
-  monthlyContribution: number;
+  monthlyContribution: number; // General monthly savings into free assets
   investmentReturn: number; // percent baseline
-  pillar2Value: number;
-  pillar3Value: number;
+  
+  // Individual Assets
+  pillar2Balance1: number;
+  pillar2Balance2: number;
+  pillar3Balance1: number;
+  pillar3Balance2: number;
+  pillar3AnnualContribution1: number; // Planned annual contribution
+  pillar3AnnualContribution2: number; // Planned annual contribution
+
   housingStatus: 'rent' | 'own';
   currentHousingCost: number; // CHF/month
+  currentRooms: number; // New: to calculate overcrowding
   housingCostIncrease: number; // percent annual
   monthlyLivingCost: number; // CHF/month
   monthlyDaycareCost: number; // CHF/month
@@ -26,7 +38,7 @@ export interface FinancialData {
   yearlyTravelBudget: number;
   universitySupport: number;
   canton: string;
-  luxuryLevel?: 'basic' | 'comfortable' | 'premium';
+  luxuryLevel: 'humble' | 'comfortable' | 'luxury';
 }
 
 export interface ProjectionPoint {
@@ -59,6 +71,7 @@ export interface ProjectionPoint {
   investmentGrowth: number;
   totalWealth: number; // Free + P2 + P3
   isDeficit: boolean;
+  notes?: string[]; // New: Events like "Moved House", "Child to Uni"
 }
 
 export interface ScenarioResult {

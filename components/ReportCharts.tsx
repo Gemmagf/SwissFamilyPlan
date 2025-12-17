@@ -41,12 +41,15 @@ const formatCurrency = (val: number) => {
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
+    // Reverse payload to match stack order visually (top to bottom) if needed, 
+    // but usually Recharts handles this. We just ensure formatting is clean.
     return (
       <div className="bg-white p-3 border border-[#8ab9b5] rounded-lg shadow-lg z-50">
-        <p className="font-bold text-[#2b4141] mb-2">{label}</p>
+        <p className="font-bold text-[#2b4141] mb-2">{label} anys</p>
         {payload.map((entry: any, index: number) => (
-          <p key={index} style={{ color: entry.color }} className="text-sm">
-            {entry.name}: {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(entry.value)}
+          <p key={index} style={{ color: entry.color }} className="text-sm flex justify-between gap-4">
+            <span>{entry.name}:</span>
+            <span className="font-medium">{new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(entry.value)}</span>
           </p>
         ))}
       </div>
