@@ -83,3 +83,25 @@ export interface ScenarioResult {
   isViable: boolean;
   savingsDepletedAge: number | null;
 }
+
+// --- ADVISORY TYPES ---
+
+export type PriorityLevel = 1 | 2 | 3; // 1: Immediate, 2: Optimization, 3: Strategic
+
+export interface Insight {
+  type: 'risk' | 'opportunity' | 'warning' | 'info';
+  title: string;
+  description: string;
+  financialImpact?: string;
+  severity: 'low' | 'medium' | 'high';
+}
+
+export interface Recommendation {
+  id: string;
+  priority: PriorityLevel;
+  category: 'Fiscal' | 'Inversió' | 'Família' | 'Carrera' | 'Risc';
+  title: string;
+  action: string;
+  benefit: string;
+  urgencyLabel: 'Ara' | '1-3 anys' | 'Llarg termini';
+}

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { FinancialData, ProjectionPoint, ScenarioResult, ScenarioType, CareerStage } from './types';
-import { estimateLocationCosts } from './services/geminiService'; // kept for estimation feature
+import { estimateLocationCosts } from './services/geminiService'; 
 import { runAllScenarios, calculateViableEarlyRetirement } from './services/financeEngine';
 import { generateReportMarkdown } from './services/reportService';
 import { FinancialChart } from './components/FinancialChart';
@@ -9,7 +9,7 @@ import {
 } from './components/ReportCharts';
 import { 
   Users, Wallet, Home, TrendingUp, Baby, Plane, FileText, Loader2, ChevronRight, Calculator, MapPin, Wand2,
-  AlertTriangle, CheckCircle, TrendingDown, PieChart, Shield, User, Briefcase
+  AlertTriangle, CheckCircle, TrendingDown, PieChart, Shield, User, Briefcase, Sliders, Zap
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -27,7 +27,7 @@ const initialData: FinancialData = {
   careerStage1: 'mid',
   careerStage2: 'mid',
   annualBonus: 0,
-  expectedSalaryIncrease: 2.0, // Base inflation now, engine adds career growth
+  expectedSalaryIncrease: 2.0, 
   currentSavings: 150000, 
   monthlyContribution: 2500, 
   investmentReturn: 4.5,
@@ -74,43 +74,51 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>('input');
   const [selectedScenario, setSelectedScenario] = useState<ScenarioType>('neutral');
 
-  // a) Ajust automàtic del lloguer segons família (Heuristic Logic)
+  // "What If" Simulator State
+  const [simPartTime, setSimPartTime] = useState(false);
+  const [simMarketShock, setSimMarketShock] = useState(false);
+  const [simPrivateSchool, setSimPrivateSchool] = useState(false);
+
+  // a) Ajust automàtic del lloguer segons família
   useEffect(() => {
-    // We use a local heuristic to avoid excessive API calls
     const totalKids = formData.currentChildren + formData.futureChildren;
-    const baseRentMap = {
-      humble: 1500,
-      comfortable: 2000,
-      luxury: 3000
-    };
-    const kidCostMap = {
-      humble: 300,
-      comfortable: 500,
-      luxury: 800
-    };
+    const baseRentMap = { humble: 1500, comfortable: 2000, luxury: 3000 };
+    const kidCostMap = { humble: 300, comfortable: 500, luxury: 800 };
 
     const base = baseRentMap[formData.luxuryLevel] || 2000;
     const extra = (totalKids > 2 ? (totalKids - 2) * (kidCostMap[formData.luxuryLevel] || 500) : 0);
-    
     const estimatedRent = base + extra;
     
-    // We use a functional update to prevent dependency loops if we included currentHousingCost
     setFormData(prev => {
-      // Only update if it seems like a default value or we want to enforce it. 
-      // To avoid annoying the user, we only update if the diff is huge or initial load?
-      // For now, let's keep it responsive to luxury level changes mainly.
       if (prev.luxuryLevel !== initialData.luxuryLevel && Math.abs(prev.currentHousingCost - estimatedRent) > 200) {
          return { ...prev, currentHousingCost: estimatedRent };
       }
       return prev;
     });
 
-  }, [formData.luxuryLevel]); // Reduced dependency to avoid fighting user input
+  }, [formData.luxuryLevel]); 
 
-  // Advanced Simulation Engine (Determininstic)
+  // Compute Modified Data for Simulations
+  const modifiedFormData = useMemo(() => {
+    const data = { ...formData };
+    if (simPartTime) {
+      data.annualGrossSalary2 = data.annualGrossSalary2 * 0.5; // 50% reduction
+    }
+    if (simMarketShock) {
+      data.investmentReturn = Math.max(0, data.investmentReturn - 2.0);
+    }
+    if (simPrivateSchool) {
+      // Assuming significant increase in educational cost for "Study Abroad" or "Private"
+      data.universitySupport = data.universitySupport + 25000; 
+      data.monthlySchoolActivityCost = data.monthlySchoolActivityCost * 2;
+    }
+    return data;
+  }, [formData, simPartTime, simMarketShock, simPrivateSchool]);
+
+  // Advanced Simulation Engine
   const scenarios = useMemo((): ScenarioResult[] => {
-    return runAllScenarios(formData);
-  }, [formData]);
+    return runAllScenarios(modifiedFormData);
+  }, [modifiedFormData]);
 
   const activeScenarioData = useMemo(() => 
     scenarios.find(s => s.type === selectedScenario) || scenarios[1]
@@ -118,8 +126,8 @@ const App: React.FC = () => {
 
   // Calculate Early Retirement KPI
   const earlyRetirementAge = useMemo(() => {
-    return calculateViableEarlyRetirement(formData);
-  }, [formData]);
+    return calculateViableEarlyRetirement(modifiedFormData);
+  }, [modifiedFormData]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
@@ -146,9 +154,8 @@ const App: React.FC = () => {
   const generateReport = async () => {
     setLoading(true);
     setActiveTab('report');
-    // Generates the deterministic markdown report with updated parameters
-    const result = generateReportMarkdown(formData, scenarios, earlyRetirementAge);
-    // Artificial delay to feel like processing if desired, or just immediate
+    // Pass modified data to report so it reflects simulations
+    const result = generateReportMarkdown(modifiedFormData, scenarios, earlyRetirementAge);
     setTimeout(() => {
         setReport(result);
         setLoading(false);
@@ -243,16 +250,44 @@ const App: React.FC = () => {
           </button>
         </nav>
 
-        <div className="mt-12 p-4 bg-black/20 rounded-xl border border-[#8ab9b5]/20">
+        {/* Dynamic Simulator Widget in Sidebar */}
+        <div className="mt-8 p-4 bg-white/5 rounded-xl border border-[#8ab9b5]/20">
+          <div className="flex items-center gap-2 mb-3 text-white">
+            <Sliders size={16} className="text-[#0eb1d2]" />
+            <span className="font-semibold text-sm">Simulador "What If"</span>
+          </div>
+          <div className="space-y-3">
+             <label className="flex items-center gap-2 cursor-pointer group select-none">
+               <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${simPartTime ? 'bg-[#0eb1d2] border-[#0eb1d2]' : 'border-gray-500 group-hover:border-[#0eb1d2]'}`}>
+                 {simPartTime && <Zap size={10} className="text-white" />}
+               </div>
+               <input type="checkbox" className="hidden" checked={simPartTime} onChange={(e) => setSimPartTime(e.target.checked)} />
+               <span className="text-xs text-gray-300">Un pare treballa 50%</span>
+             </label>
+
+             <label className="flex items-center gap-2 cursor-pointer group select-none">
+               <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${simMarketShock ? 'bg-[#0eb1d2] border-[#0eb1d2]' : 'border-gray-500 group-hover:border-[#0eb1d2]'}`}>
+                 {simMarketShock && <Zap size={10} className="text-white" />}
+               </div>
+               <input type="checkbox" className="hidden" checked={simMarketShock} onChange={(e) => setSimMarketShock(e.target.checked)} />
+               <span className="text-xs text-gray-300">Mercat estancat (-2%)</span>
+             </label>
+
+             <label className="flex items-center gap-2 cursor-pointer group select-none">
+               <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${simPrivateSchool ? 'bg-[#0eb1d2] border-[#0eb1d2]' : 'border-gray-500 group-hover:border-[#0eb1d2]'}`}>
+                 {simPrivateSchool && <Zap size={10} className="text-white" />}
+               </div>
+               <input type="checkbox" className="hidden" checked={simPrivateSchool} onChange={(e) => setSimPrivateSchool(e.target.checked)} />
+               <span className="text-xs text-gray-300">Universitat/Escola Estranger</span>
+             </label>
+          </div>
+        </div>
+
+        <div className="mt-8 p-4 bg-black/20 rounded-xl border border-[#8ab9b5]/20">
           <p className="text-xs text-[#8ab9b5] mb-2">Patrimoni Estimat (65 anys)</p>
           <p className="text-xl font-bold text-white">
              {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 })
                 .format(activeScenarioData.data.find(p => p.age === 65)?.totalWealth || 0)}
-          </p>
-          <p className="text-xs text-[#8ab9b5] mt-4 mb-2">Patrimoni Final (90 anys)</p>
-          <p className="text-lg text-white opacity-80">
-             {new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 })
-                .format(activeScenarioData.finalWealth)}
           </p>
         </div>
       </aside>
@@ -419,11 +454,10 @@ const App: React.FC = () => {
                 />
               </div>
 
-              {/* AI Executive Summary */}
+              {/* Generated Report Content */}
               {report && (
-                 <div className="bg-[#f8fafc] p-6 rounded-lg border border-[#8ab9b5]/20 prose prose-stone max-w-none text-sm text-[#656c6e] prose-p:text-[#656c6e] prose-li:text-[#656c6e] prose-td:text-[#656c6e] prose-th:text-[#2b4141] prose-table:text-sm">
-                   <h3 className="text-[#2b4141] font-bold mt-0 flex items-center gap-2"><FileText size={16} /> Resum Executiu</h3>
-                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.split('##')[0] || "Generant..."}</ReactMarkdown>
+                 <div className="bg-[#f8fafc] p-8 rounded-lg border border-[#8ab9b5]/20 prose prose-stone max-w-none text-sm text-[#656c6e] prose-p:text-[#656c6e] prose-li:text-[#656c6e] prose-td:text-[#656c6e] prose-th:text-[#2b4141] prose-table:text-sm prose-h1:text-[#2b4141] prose-h2:text-[#0eb1d2] prose-h3:text-[#2b4141]">
+                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
                  </div>
               )}
             </div>
@@ -509,14 +543,6 @@ const App: React.FC = () => {
                   interpretation="L'interès compost és la variable crítica. Petits canvis en el rendiment anual (2.5% vs 6.5%) generen diferències de milions de CHF a 40 anys vista."
               />
             </div>
-
-            {/* Report Content */}
-            {report && (
-               <div className="bg-white rounded-xl shadow-sm border border-[#8ab9b5]/30 p-8 prose prose-stone max-w-none text-[#656c6e] prose-p:text-[#656c6e] prose-li:text-[#656c6e] prose-td:text-[#656c6e] prose-th:text-[#2b4141] prose-table:text-sm">
-                  <SectionHeader icon={FileText} title="Anàlisi Detallat" />
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
-               </div>
-            )}
             
             <div className="flex justify-center pt-8">
                 <button 

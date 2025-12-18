@@ -1,6 +1,141 @@
-import { FinancialData, ScenarioResult } from '../types';
+
+import { FinancialData, ScenarioResult, ProjectionPoint, Insight, Recommendation } from '../types';
 
 const formatMoney = (n: number) => new Intl.NumberFormat('de-CH', { style: 'currency', currency: 'CHF', maximumFractionDigits: 0 }).format(n);
+
+function analyzeFinancialHealth(data: FinancialData, points: ProjectionPoint[]): {
+  insights: Insight[];
+  kpis: any;
+} {
+  const insights: Insight[] = [];
+  const worstYear = points.reduce((prev, curr) => (prev.yearlySavings < curr.yearlySavings ? prev : curr));
+  const maxDeficit = worstYear.yearlySavings < 0 ? worstYear.yearlySavings : 0;
+  const freedomPoint = points.find(p => p.age < data.retirementAge && (p.investedAssets * 0.04) > p.totalExpenses);
+
+  const deficitYears = points.filter(p => p.isDeficit);
+  if (deficitYears.length > 0) {
+    const startYear = deficitYears[0].year;
+    const endYear = deficitYears[deficitYears.length - 1].year;
+    const sample = deficitYears[0];
+    let cause = "despeses generals";
+    if (sample.childrenExpenses > sample.totalExpenses * 0.3) cause = "costos de guarderia (Kita)";
+    else if (sample.housingExpenses > sample.totalExpenses * 0.4) cause = "increment costos habitatge";
+
+    insights.push({
+      type: 'warning',
+      title: 'Tensió de Tresoreria',
+      description: `Es preveu un flux de caixa negatiu entre ${startYear} i ${endYear} degut principalment a ${cause}.`,
+      severity: maxDeficit < -20000 ? 'high' : 'medium',
+      financialImpact: `Dèficit màxim: ${formatMoney(maxDeficit)}`
+    });
+  }
+
+  const maxP3 = 7056;
+  const gap = (maxP3 - data.pillar3AnnualContribution1) + (maxP3 - data.pillar3AnnualContribution2);
+  if (gap > 0) {
+    insights.push({
+      type: 'opportunity',
+      title: 'Optimització Fiscal (3r Pilar)',
+      description: 'L\'aportació actual al 3r Pilar és inferior al màxim legal.',
+      severity: 'medium',
+      financialImpact: `Deducció no aprofitada: ~${formatMoney(gap)}`
+    });
+  }
+
+  const movePoint = points.find(p => p.notes?.some(n => n.includes('Mudança')));
+  if (movePoint) {
+    insights.push({
+      type: 'info',
+      title: 'Projecció Immobiliària',
+      description: `L'any ${movePoint.year} es contempla un canvi de residència per adaptar-se al creixement del nucli familiar.`,
+      severity: 'medium'
+    });
+  }
+
+  const totalChildCost = points.reduce((acc, p) => acc + p.childrenExpenses, 0);
+  const avgChildCostPerYear = totalChildCost / (points.filter(p => p.activeChildren > 0).length || 1);
+
+  return {
+    insights,
+    kpis: {
+      worstYear: worstYear.year,
+      maxDeficit,
+      freedomAge: freedomPoint?.age || null,
+      totalChildCost,
+      avgChildCostPerYear
+    }
+  };
+}
+
+function generateRecommendations(data: FinancialData, kpis: any, insights: Insight[]): Recommendation[] {
+  const recs: Recommendation[] = [];
+  const maxP3 = 7056;
+  const p3Gap = (maxP3 - data.pillar3AnnualContribution1) + (maxP3 - data.pillar3AnnualContribution2);
+  if (p3Gap > 0) {
+    recs.push({
+      id: 'fiscal-p3', priority: 1, category: 'Fiscal',
+      title: 'Augmentar aportació al 3r Pilar',
+      action: `Incrementar l'aportació anual en ${formatMoney(p3Gap)}.`,
+      benefit: `Estalvi fiscal estimat de ${formatMoney(p3Gap * 0.25)} anuals.`,
+      urgencyLabel: 'Ara'
+    });
+  }
+  const targetEmerg = (data.monthlyLivingCost + data.currentHousingCost) * 6;
+  if (data.currentSavings < targetEmerg) {
+    recs.push({
+      id: 'risk-emergency', priority: 1, category: 'Risc',
+      title: 'Consolidar Fons d\'Emergència',
+      action: `Destinar l'estalvi mensual a liquiditat fins assolir ${formatMoney(targetEmerg)}.`,
+      benefit: 'Cobertura de 6 mesos de despeses fixes.', urgencyLabel: 'Ara'
+    });
+  }
+  if (data.currentSavings > targetEmerg * 1.5 && p3Gap === 0) {
+     recs.push({
+      id: 'inv-cashdrag', priority: 2, category: 'Inversió',
+      title: 'Gestió d\'Excedent de Tresoreria',
+      action: `Reassignar ${formatMoney(data.currentSavings - targetEmerg)} a vehicles d'inversió.`,
+      benefit: 'Protecció contra inflació i generació de rendiment compost.', urgencyLabel: '1-3 anys'
+    });
+  }
+  recs.push({
+    id: 'strat-pension', priority: 3, category: 'Carrera',
+    title: 'Estratègia de Compra 2n Pilar (Buy-in)',
+    action: 'Planificar aportacions extraordinàries al 2n Pilar a partir dels 50 anys.',
+    benefit: 'Optimització fiscal en el pic de la corba salarial.', urgencyLabel: 'Llarg termini'
+  });
+  return recs.sort((a, b) => a.priority - b.priority);
+}
+
+function generateLifeRoadmap(data: FinancialData, points: ProjectionPoint[]): string {
+  let md = `### Full de Ruta (Timeline)\n\n`;
+  md += `| Any | Edat | Esdeveniment | Anàlisi d'Impacte |\n`;
+  md += `| :--- | :--- | :--- | :--- |\n`;
+  points.filter(p => p.notes).forEach(p => {
+    p.notes?.forEach(note => {
+      md += `| ${p.year} | ${p.age} | ${note} | Impacte en cash flow reflectit. |\n`;
+    });
+  });
+  const retirementPoint = points.find(p => p.age === data.retirementAge);
+  if (retirementPoint) {
+    md += `| ${retirementPoint.year} | ${retirementPoint.age} | Jubilació Planificada | ${retirementPoint.totalWealth > 0 ? "Cobertura suficient." : "Risc detectat."} |\n`;
+  }
+  return md + `\n`;
+}
+
+function generateRetirementAnalysis(data: FinancialData, earlyRetirementAge: number | null): string {
+  let md = `### Estudi de Jubilació Anticipada\n\n`;
+  md += `L'objectiu de jubilació actual està fixat als **${data.retirementAge} anys**.\n\n`;
+  
+  if (earlyRetirementAge && earlyRetirementAge < data.retirementAge) {
+    md += `*   **Viabilitat:** La jubilació anticipada és **opcional, no necessària**. Segons el model, podríeu avançar-la fins als **${earlyRetirementAge} anys** sense comprometre la solvència a llarg termini.\n`;
+    md += `*   **Marge de Seguretat:** Disposeu d'un marge de ${data.retirementAge - earlyRetirementAge} anys de capital lliure.\n`;
+  } else if (earlyRetirementAge && earlyRetirementAge === data.retirementAge) {
+    md += `*   **Viabilitat:** El pla està ajustat. L'edat de ${data.retirementAge} anys és el límit de prudència financera actual.\n`;
+  } else {
+    md += `*   **Viabilitat:** Amb la configuració actual, la jubilació anticipada presenta un risc elevat. Es recomana mantenir l'edat de ${data.retirementAge} o augmentar la taxa d'estalvi actual.\n`;
+  }
+  return md + `\n`;
+}
 
 export function generateReportMarkdown(
   data: FinancialData, 
@@ -9,121 +144,42 @@ export function generateReportMarkdown(
 ): string {
   const neutral = scenarios.find(s => s.type === 'neutral')!;
   const pessimistic = scenarios.find(s => s.type === 'pessimistic')!;
-  
-  // KPI Calculations
-  const retirementPoint = neutral.data.find(p => p.age === data.retirementAge);
-  const patrimonyAtRetirement = retirementPoint?.totalWealth ?? neutral.finalWealth;
-  const childrenTotalCost = neutral.data.reduce((acc, p) => acc + p.childrenExpenses, 0);
-  
-  // Find deficit periods for Narrative
-  const deficitPeriods: {start: number, end: number, cause: string}[] = [];
-  let currentDeficitStart: number | null = null;
-  
-  neutral.data.forEach((p, i) => {
-    if (p.isDeficit) {
-      if (currentDeficitStart === null) currentDeficitStart = p.year;
-    } else {
-      if (currentDeficitStart !== null) {
-        // End of a deficit period
-        const midYearIndex = i - 1; 
-        const samplePoint = neutral.data[midYearIndex];
-        let cause = "Despeses generals";
-        if (samplePoint.childrenExpenses > (samplePoint.totalExpenses * 0.3)) cause = "Càrrega Kita/Educació";
-        else if (samplePoint.age >= data.retirementAge) cause = "Rendes jubilació insuficients";
-        
-        deficitPeriods.push({ start: currentDeficitStart, end: p.year - 1, cause });
-        currentDeficitStart = null;
-      }
-    }
-  });
+  const { insights, kpis } = analyzeFinancialHealth(data, neutral.data);
+  const recommendations = generateRecommendations(data, kpis, insights);
+  const patrimonyAtRetirement = neutral.data.find(p => p.age === data.retirementAge)?.totalWealth || 0;
 
-  // Collect Timeline Events (Moved House, etc.)
-  const events = neutral.data.filter(p => p.notes && p.notes.length > 0).map(p => ({
-     year: p.year,
-     age: p.age,
-     note: p.notes!.join(", ")
-  }));
-  // Filter out repetitive annual events if any, keep major ones
-  const majorEvents = events.filter(e => !e.note.includes("Fons Esgotats") || e.year % 5 === 0);
+  let md = `# Informe Financer: SwissFamilyPlan\n`;
+  md += `**Data:** ${new Date().toLocaleDateString('ca-ES')} | **Perfil:** ${data.luxuryLevel.toUpperCase()}\n\n`;
 
-  // Recommendations Logic
-  const maxP3 = 7056;
-  const p1Gap = maxP3 - data.pillar3AnnualContribution1;
-  const p2Gap = maxP3 - data.pillar3AnnualContribution2;
-  const totalP3Gap = Math.max(0, p1Gap) + Math.max(0, p2Gap);
-  const taxSavingPotential = totalP3Gap * 0.25; // Approx marginal tax rate
+  md += `## 1. Resum Executiu\n\n`;
+  md += neutral.isViable 
+    ? `L'anàlisi de viabilitat confirma que l'estructura financera és **sostenible**. Podeu permetre-us el vostre pla de vida sense comprometre la jubilació.\n\n`
+    : `L'anàlisi detecta **riscos estructurals**. Calen ajustos per garantir la solvència post-jubilació.\n\n`;
 
-  // --- REPORT GENERATION ---
+  md += `**Indicadors Clau (KPI):**\n`;
+  md += `*   **Patrimoni a la Jubilació:** ${formatMoney(patrimonyAtRetirement)}.\n`;
+  md += kpis.freedomAge ? `*   **Independència Financera:** Assolible als **${kpis.freedomAge} anys**.\n` : '';
+  md += `*   **Cost Promig Fills:** ${formatMoney(kpis.avgChildCostPerYear)}/any.\n\n`;
 
-  let md = `# Informe de Planificació Financera: SwissFamilyPlan\n\n`;
-  md += `**Data:** ${new Date().toLocaleDateString('ca-ES')} | **Cantó:** ${data.canton} | **Perfil:** ${data.luxuryLevel.toUpperCase()}\n\n`;
-  
-  // 1. Executive Summary
-  md += `## 1. Visió General i Diagnòstic\n\n`;
-  md += `El vostre pla financer es classifica com a **${neutral.isViable ? '🟢 VIABLE' : '🔴 VULNERABLE'}** sota hipòtesis neutres.\n\n`;
-  
-  md += `**Fites Principals:**\n`;
-  md += `- **Patrimoni a la Jubilació (${data.retirementAge} anys):** ${formatMoney(patrimonyAtRetirement)}\n`;
-  if (majorEvents.some(e => e.note.includes("Mudança"))) {
-     md += `- **Habitatge:** El model preveu una mudança necessària a un pis més gran al voltant de l'any ${majorEvents.find(e => e.note.includes("Mudança"))?.year} per acomodar la família.\n`;
+  md += `## 2. Planificació Vital i Futur\n\n`;
+  md += generateLifeRoadmap(data, neutral.data);
+  md += generateRetirementAnalysis(data, earlyRetirementAge);
+
+  md += `## 3. Recomanacions Estratègiques\n\n`;
+  const p1 = recommendations.filter(r => r.priority === 1);
+  if (p1.length > 0) {
+    md += `### Prioritat 1: Accions Immediates\n`;
+    p1.forEach(r => md += `*   **${r.title}**: ${r.action}\n`);
+    md += `\n`;
   }
-  md += `- **Cost Criança Total:** ${formatMoney(childrenTotalCost)} (estimat fins als 25 anys).\n\n`;
-
-  // 2. Narrative Cash Flow
-  md += `## 2. Narrativa del Flux de Caixa\n\n`;
-  md += `L'anàlisi detecta com evolucionarà la vostra capacitat d'estalvi any a any:\n\n`;
-  
-  if (deficitPeriods.length === 0) {
-      md += `✅ **Sostenibilitat:** Manteniu superàvit (estalvi positiu) durant tota la projecció. Això indica una estructura de costos molt sana o ingressos molt alts.\n`;
-  } else {
-      md += `⚠️ **Períodes de Tensió Financera (Dèficit):**\n`;
-      deficitPeriods.forEach(p => {
-         md += `- **${p.start}–${p.end}**: Flux negatiu causat principalment per **${p.cause}**. Durant aquests anys, la família consumirà estalvis acumulats.\n`;
-      });
-      md += `\n*Nota: Tenir dèficit temporalment no és dolent si hi ha liquiditat prèvia (estalvis) per cobrir-lo, com és el cas de la fase Kita.*\n`;
+  const rest = recommendations.filter(r => r.priority > 1);
+  if (rest.length > 0) {
+    md += `### Prioritat 2 i 3: Optimització i Estratègia\n`;
+    rest.forEach(r => md += `*   **${r.title}**: ${r.action}\n`);
   }
 
-  // 3. Strategic Recommendations
-  md += `\n## 3. Recomanacions Tàctiques (Valor Afegit)\n\n`;
-
-  md += `### 💰 Fiscalitat i 3r Pilar\n`;
-  if (totalP3Gap > 0) {
-      md += `🚨 **Oportunitat Perduda:** No esteu maximitzant el 3r Pilar. Teniu un "gap" de ${formatMoney(totalP3Gap)}/any.\n`;
-      md += `> **Acció Immediata:** Si cobriu aquest gap, obtindreu un **retorn fiscal garantit immediat d'aprox. ${formatMoney(taxSavingPotential)} cada any** en devolució d'impostos. És una rendibilitat del 25% sense risc.\n`;
-  } else {
-      md += `✅ **Òptim:** Esteu aprofitant al màxim la deducció del 3r Pilar (${formatMoney(maxP3*2)}/any en total).\n`;
-  }
-
-  md += `\n### 🏠 Estratègia d'Habitatge\n`;
-  if (data.housingStatus === 'rent') {
-      md += `Actualment pagueu ${formatMoney(data.currentHousingCost)}/mes. `;
-      if ((data.currentChildren + data.futureChildren) > data.currentRooms) {
-          md += `Amb ${data.currentChildren + data.futureChildren} fills previstos i només ${data.currentRooms} habitacions, el model ha forçat automàticament un increment de lloguer futur per reflectir una mudança realista.\n`;
-      } else {
-          md += `L'espai actual sembla suficient per a la planificació familiar indicada.\n`;
-      }
-  }
-
-  md += `\n### 🎓 Planificació Educativa\n`;
-  md += `Si els vostres fills estudien a Suïssa i viuen a casa, el cost és manejable (~15k/any). Si opten per universitats a altres cantons (Lausanne, St. Gallen) o a l'estranger, el cost es dispara a **30k-40k CHF/any**.\n`;
-  md += `> **Recomanació:** Obriu un compte d'inversió "Junior" a nom dels pares (per control) amb una aportació de 100-200 CHF/mes des del naixement.\n`;
-
-  // 4. Timeline
-  if (majorEvents.length > 0) {
-      md += `\n## 4. Timeline d'Esdeveniments Clau\n\n`;
-      md += `| Any | Edat | Esdeveniment |\n`;
-      md += `| :--- | :--- | :--- |\n`;
-      majorEvents.slice(0, 8).forEach(e => {
-          md += `| **${e.year}** | ${e.age} | ${e.note} |\n`;
-      });
-  }
-
-  // 5. Comparison Table
-  md += `\n## 5. Comparativa d'Escenaris a 90 anys\n\n`;
-  md += `| Escenari | Patrimoni Final | Estat |\n`;
-  md += `| :--- | ---: | :--- |\n`;
-  md += `| Pessimista | ${formatMoney(pessimistic.finalWealth)} | ${pessimistic.isViable ? 'Viable' : '❌ Esgotat'} |\n`;
-  md += `| Neutre | ${formatMoney(neutral.finalWealth)} | Viable |\n`;
+  md += `\n---\n### Annex: Estrès de Mercat\n`;
+  md += `En l'escenari pessimista, el patrimoni final seria de **${formatMoney(pessimistic.finalWealth)}**. Pla viable: **${pessimistic.isViable ? "Sí" : "No"}**.\n`;
 
   return md;
 }
